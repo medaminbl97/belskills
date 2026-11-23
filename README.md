@@ -47,8 +47,20 @@ After cloning a project that uses it:
 git submodule update --init
 ```
 
+Claude Code only discovers skills at `.claude/skills/<name>/SKILL.md`, but skills
+here are grouped by stack. Run the link script to symlink each skill into the
+project instead of copying it:
+
+```sh
+.agents/skills/link-skills.sh      # creates .claude/skills/<name> -> ../../.agents/skills/<stack>/<name>
+```
+
+Commit the resulting symlinks. Re-run the script after adding, renaming or
+removing a skill; it refreshes links and removes stale ones.
+
 ## Adding a skill
 
 1. Pick the folder for the skill's stack, or create a new one (e.g. `python/`).
 2. Add `<stack>/<skill-name>/SKILL.md` with `name` and `description` frontmatter. `name` must match the folder name.
 3. Add a row for it to the table above.
+4. Run `link-skills.sh` in each project that should see it.
