@@ -1,0 +1,74 @@
+# Complete root for terraform/projects/<project>/databases, not a fragment.
+# Only needed when the platform has the shared PostgreSQL layer.
+# Repeat the standard terraform{}/provider blocks from an existing databases root
+# (dokploy + infisical providers, both providers configured from the injected
+# vars below). The orchestrator injects: dokploy_endpoint, dokploy_api_key,
+# infisical_url, infisical_token, infisical_project_id, environment, platform, project,
+# environment_id (the PLATFORM postgres project's environment for this stage),
+# postgres_host.
+
+variable "dokploy_endpoint" {
+  type = string
+}
+variable "dokploy_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "infisical_url" {
+  type = string
+}
+variable "infisical_token" {
+  type      = string
+  sensitive = true
+}
+variable "infisical_project_id" {
+  type = string
+}
+variable "environment" {
+  type = string
+}
+variable "platform" {
+  type = string
+}
+variable "project" {
+  type = string
+}
+variable "environment_id" {
+  type = string
+}
+variable "postgres_host" {
+  type = string
+}
+
+data "infisical_secrets" "postgres" {
+  workspace_id = var.infisical_project_id
+  env_slug     = var.environment
+  folder_path  = "/platform/postgres"
+}
+data "infisical_secrets" "backend" {
+  workspace_id = var.infisical_project_id
+  env_slug     = var.environment
+  folder_path  = "/${var.project}/backend"
+}
+
+# One module call per DB-backed component. Copy this block and rename
+# "backend" for each additional component; the module itself is reused
+# unmodified from terraform/modules/database.
+module "backend" {
+  source         = "../../../modules/database"
+  name           = "${var.platform}-${var.project}-${var.environment}-backend-database"
+  environment_id = var.environment_id
+  postgres_host  = var.postgres_host
+  database       = "${replace(var.project, "-", "_")}_backend"
+  user           = "${replace(var.project, "-", "_")}_backend"
+  admin_password = data.infisical_secrets.postgres.secrets["POSTGRES_PASSWORD"].value
+  password       = data.infisical_secrets.backend.secrets["DB_PASSWORD"].value
+}
+
+# Concatenate one deployment/container pair per module call added above.
+output "deployments" {
+  value = [module.backend.deployment]
+}
+output "containers" {
+  value = [module.backend.container]
+}

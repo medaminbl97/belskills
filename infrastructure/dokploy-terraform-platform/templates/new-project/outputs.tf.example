@@ -1,0 +1,19 @@
+# Complete outputs.tf for terraform/projects/<project>/apps, not a fragment.
+# Concatenate one entry per dokploy_application added in apps.tf.example.
+
+output "deployments" {
+  value = concat(
+    [{ kind = "application", id = dokploy_application.frontend.id }],
+    [{ kind = "application", id = dokploy_application.backend.id }],
+    [for runner in dokploy_application.runner : { kind = "application", id = runner.id }]
+  )
+}
+output "containers" {
+  value = []
+}
+output "checks" {
+  value = [
+    { url = "https://${var.domains.backend}/health", discovery = false },
+    { url = "https://${var.domains.frontend}", discovery = false },
+  ]
+}

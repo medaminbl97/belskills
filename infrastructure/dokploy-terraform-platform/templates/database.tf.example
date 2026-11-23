@@ -1,0 +1,28 @@
+# Fragment for terraform/projects/<project>/databases, not a complete root.
+# Requires the platform variable (name prefix) in that root.
+# Declare runner-injected variables/providers and Infisical data sources as in
+# an existing project's databases root; replace SERVICE_SLUG and append outputs for every module.
+data "infisical_secrets" "service" {
+  workspace_id = var.infisical_project_id
+  env_slug     = var.environment
+  folder_path  = "/${var.project}/SERVICE_SLUG"
+}
+
+module "service" {
+  source         = "../../../modules/database"
+  name           = "${var.platform}-${var.project}-${var.environment}-SERVICE_SLUG-database"
+  environment_id = var.environment_id
+  postgres_host  = var.postgres_host
+  database       = "${replace(var.project, "-", "_")}_SERVICE_SLUG"
+  user           = "${replace(var.project, "-", "_")}_SERVICE_SLUG"
+  admin_password = data.infisical_secrets.postgres.secrets["POSTGRES_PASSWORD"].value
+  password       = data.infisical_secrets.service.secrets["DB_PASSWORD"].value
+}
+
+output "deployments" {
+  value = [module.service.deployment]
+}
+
+output "containers" {
+  value = [module.service.container]
+}

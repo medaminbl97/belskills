@@ -1,0 +1,195 @@
+# Complete root for terraform/projects/<project>/apps, not a fragment.
+# Repeat the standard terraform{}/provider blocks from an existing apps root
+# (dokploy + infisical providers; required_version >= 1.11.0).
+
+variable "dokploy_endpoint" {
+  type = string
+}
+variable "dokploy_api_key" {
+  type      = string
+  sensitive = true
+}
+variable "infisical_url" {
+  type = string
+}
+variable "infisical_token" {
+  type      = string
+  sensitive = true
+}
+variable "infisical_project_id" {
+  type = string
+}
+variable "environment" {
+  type = string
+  validation {
+    condition     = contains(["dev", "prod"], var.environment)
+    error_message = "Use dev or prod; ENV=all is expanded by Make."
+  }
+}
+variable "platform" {
+  description = "Platform name prefix injected by the orchestrator (resource-name prefix)."
+  type        = string
+}
+variable "project" {
+  type = string
+}
+variable "environment_id" {
+  type = string
+}
+# Delete if the platform has no shared PostgreSQL layer.
+variable "postgres_host" {
+  type    = string
+  default = ""
+}
+# OPTIONAL: only set (by the orchestrator) when the OIDC layer is enabled.
+variable "oidc_url" {
+  type    = string
+  default = ""
+}
+variable "domains" {
+  type = object({
+    frontend = string
+    backend  = string
+  })
+}
+variable "frontend_repository_url" {
+  type = string
+  validation {
+    condition     = can(regex("^https://github\\.com/[^/]+/[^/]+/?$", var.frontend_repository_url))
+    error_message = "Use an HTTPS github.com owner/repository URL."
+  }
+}
+variable "github_app_name" {
+  description = "Name of the installed Dokploy GitHub App connection."
+  type        = string
+}
+variable "backend_image" {
+  description = "Set this if the backend runs a maintained image instead of building from source."
+  type        = string
+  default     = ""
+}
+variable "enable_github_runner" {
+  type    = bool
+  default = false
+}
+variable "github_runner_org" {
+  type    = string
+  default = ""
+}
+
+locals {
+  prefix      = "${var.platform}-${var.project}-${var.environment}"
+  git_branch  = var.environment == "dev" ? "dev" : "main"
+  web_secrets = data.infisical_secrets.component["frontend"].secrets
+}
+data "dokploy_github_provider" "apps" {
+  name = var.github_app_name
+}
+data "infisical_secrets" "component" {
+  for_each     = toset(["backend", "frontend", "runner"])
+  workspace_id = var.infisical_project_id
+  env_slug     = var.environment
+  folder_path  = "/${var.project}/${each.key}"
+}
+
+# A source-built, GitHub-deployed service. Copy this block (and its domain)
+# for every additional frontend/BFF service in this project; put them in a
+# `for_each` map like a `webapps` map once there is more than one.
+resource "dokploy_application" "frontend" {
+  name            = "${local.prefix}-frontend"
+  app_name_prefix = "${local.prefix}-frontend"
+  environment_id  = var.environment_id
+  github = {
+    owner        = split("/", trimsuffix(trimsuffix(var.frontend_repository_url, "/"), ".git"))[3]
+    repository   = split("/", trimsuffix(trimsuffix(var.frontend_repository_url, "/"), ".git"))[4]
+    branch       = local.git_branch
+    github_id    = data.dokploy_github_provider.apps.id
+    trigger_type = "push"
+  }
+  build            = { type = "dockerfile", dockerfile = "Dockerfile", context_path = "." }
+  env              = <<-EOT
+    NODE_ENV=production
+    PORT=3000
+    BACKEND_API_URL=https://${var.domains.backend}
+    BACKEND_READ_TOKEN=${try(local.web_secrets["API_TOKEN"].value, "")}
+  EOT
+  auto_deploy      = true
+  deploy_on_change = false
+  lifecycle {
+    precondition {
+      condition     = try(trimspace(local.web_secrets["API_TOKEN"].value) != "", false)
+      error_message = "Add a read-only API_TOKEN to /${var.project}/frontend in Infisical before deploying the frontend app. See the apps.tf.example comment on the first-install bootstrap order."
+    }
+  }
+}
+resource "dokploy_domain" "frontend" {
+  application_id   = dokploy_application.frontend.id
+  host             = var.domains.frontend
+  port             = 3000
+  https            = true
+  certificate_type = "letsencrypt"
+}
+
+# A maintained-image or build-from-source backend. This is the component that
+# the "frontend" app's API_TOKEN must be minted against (if your backend issues tokens); deploy it FIRST on a
+# brand-new project (see SKILL.md and references/operations.md, "first-install ordering") before the frontend's
+# precondition above can be satisfied.
+resource "dokploy_application" "backend" {
+  name             = "${local.prefix}-backend"
+  app_name_prefix  = "${local.prefix}-backend"
+  environment_id   = var.environment_id
+  docker           = var.backend_image != "" ? { image = var.backend_image } : null
+  build            = var.backend_image == "" ? { type = "dockerfile", dockerfile = "Dockerfile", context_path = "." } : null
+  deploy_on_change = false
+  env              = <<-EOT
+    DB_HOST=${var.postgres_host}
+    DB_NAME=${replace(var.project, "-", "_")}_backend
+    DB_USER=${replace(var.project, "-", "_")}_backend
+    DB_PASSWORD=${data.infisical_secrets.component["backend"].secrets["DB_PASSWORD"].value}
+    APP_SECRET=${data.infisical_secrets.component["backend"].secrets["APP_SECRET"].value}
+    PUBLIC_URL=https://${var.domains.backend}
+    %{ if var.oidc_url != "" ~}
+    OIDC_ISSUER=${var.oidc_url}
+    %{ endif ~}
+  EOT
+}
+resource "dokploy_domain" "backend" {
+  application_id   = dokploy_application.backend.id
+  host             = var.domains.backend
+  port             = 8080
+  https            = true
+  certificate_type = "letsencrypt"
+}
+
+# Optional self-hosted GitHub Actions runner for this project; mounts the host
+# Docker socket (effectively host root) and must stay opt-in.
+resource "dokploy_application" "runner" {
+  count            = var.enable_github_runner ? 1 : 0
+  name             = "${local.prefix}-runner"
+  app_name_prefix  = "${local.prefix}-runner"
+  environment_id   = var.environment_id
+  docker           = { image = "myoung34/github-runner:latest" }
+  deploy_on_change = false
+  env              = <<-EOT
+    RUNNER_SCOPE=org
+    ORG_NAME=${var.github_runner_org}
+    RUNNER_NAME=${local.prefix}
+    RUNNER_WORKDIR=/tmp/runner/work
+    LABELS=vps,docker,self-hosted
+    RUNNER_TOKEN=${try(data.infisical_secrets.component["runner"].secrets["RUNNER_TOKEN"].value, "")}
+  EOT
+  lifecycle {
+    precondition {
+      condition     = var.github_runner_org != "" && contains(keys(data.infisical_secrets.component["runner"].secrets), "RUNNER_TOKEN")
+      error_message = "Set github_runner_org and add RUNNER_TOKEN to /${var.project}/runner in Infisical before enabling the runner."
+    }
+  }
+}
+resource "dokploy_mount" "runner_socket" {
+  count        = var.enable_github_runner ? 1 : 0
+  service_id   = dokploy_application.runner[0].id
+  service_type = "application"
+  type         = "bind"
+  host_path    = "/var/run/docker.sock"
+  mount_path   = "/var/run/docker.sock"
+}

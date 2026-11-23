@@ -1,0 +1,4 @@
+# Placeholder names for the application snippet only; replace before use.
+service_repository_url = "https://github.com/OWNER/REPOSITORY"
+github_app_name        = "REPLACE_WITH_DOKPLOY_GITHUB_APP_NAME"
+service_domain         = "REPLACE_WITH_SERVICE_HOSTNAME"

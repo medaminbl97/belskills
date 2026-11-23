@@ -18,6 +18,12 @@ Shared agent skills, grouped by tech stack. Each skill is a folder containing a 
 | --- | --- |
 | [`directus-backend-bootstrap`](directus/directus-backend-bootstrap/SKILL.md) | Our standard Directus flow for every repo: Docker + Postgres, YAML schemas synced at startup, environment-aware seeds, read-only policies, smoke test. Ships copy-ready [`templates/`](directus/directus-backend-bootstrap/templates/). |
 
+### Infrastructure — [`infrastructure/`](infrastructure/)
+
+| Skill | What it does |
+| --- | --- |
+| [`dokploy-terraform-platform`](infrastructure/dokploy-terraform-platform/SKILL.md) | Layered self-hosted platform on one Docker host: Dokploy + Terraform, Infisical secrets, isolated projects. Shared PostgreSQL and an OIDC provider are optional. Includes reference docs and copy-ready Terraform templates. |
+
 ### Tooling — [`tooling/`](tooling/)
 
 Skills that work with any stack.
