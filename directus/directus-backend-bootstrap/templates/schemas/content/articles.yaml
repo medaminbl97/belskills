@@ -1,0 +1,66 @@
+collection: articles
+schema: {}
+meta:
+  icon: newspaper
+  note: Articles.
+fields:
+  - field: id
+    type: integer
+    schema:
+      is_primary_key: true
+      has_auto_increment: true
+    meta:
+      interface: input
+      hidden: true
+      readonly: true
+  - field: translations
+    type: alias
+    schema: null
+    meta:
+      interface: translations
+      special: [translations]
+      options:
+        languageField: name
+        languageDirectionField: direction
+        defaultLanguage: de
+  - field: status
+    type: string
+    schema:
+      is_nullable: false
+      default_value: draft
+    meta:
+      interface: select-dropdown
+      required: true
+      options:
+        choices:
+          - { text: Draft, value: draft }
+          - { text: Published, value: published }
+          - { text: Archived, value: archived }
+      validation:
+        status:
+          _in: [draft, published, archived]
+  - field: published_at
+    type: timestamp
+    meta:
+      interface: datetime
+      note: Optional start of visibility; empty means immediately when published.
+  - field: expires_at
+    type: timestamp
+    meta:
+      interface: datetime
+      note: Optional end of visibility; empty means no expiry.
+  - field: thumbnail
+    type: uuid
+    schema:
+      is_nullable: true
+    meta:
+      interface: file-image
+      special: [file]
+      note: Optional thumbnail shown on the article card.
+relations:
+  - field: thumbnail
+    related_collection: directus_files
+    schema:
+      foreign_key_column: id
+      on_delete: SET NULL
+    meta: {}

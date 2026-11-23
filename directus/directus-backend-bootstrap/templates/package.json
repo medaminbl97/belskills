@@ -1,0 +1,8 @@
+{
+  "name": "cms-schema-loader",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "js-yaml": "4.1.1"
+  }
+}

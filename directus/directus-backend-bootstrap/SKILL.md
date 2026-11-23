@@ -1,164 +1,196 @@
 ---
 name: directus-backend-bootstrap
-description: Design or implement a Docker-based Directus backend with namespaced YAML schemas, startup synchronization, and optional development seeds.
+description: Use whenever a repo needs a Directus backend or changes to one (collections, fields, relations, translations, seeds, access policies, startup, CI). Defines our standard Docker + Postgres flow with YAML schemas synced at startup, environment-aware seeds, managed read-only policies and a smoke test, and ships ready-to-copy templates so every repo works the same way.
 ---
 
-# Bootstrap a Directus backend
+# Directus backend: our standard flow
 
-Use this skill when setting up a Directus backend or adding declarative
-collection schemas and seed data to one. Adapt it to the target project; do
-not assume the project has this repository's scripts, collection names, or
-database. Check the installed Directus version and its matching documentation
-before choosing API features.
+Every repo with a Directus backend uses **the same flow and the same files**.
+Do not invent a new layout. For a new backend, copy `templates/` (next to this
+file) and adapt it. For an existing backend, compare it with `templates/` and
+converge on it, asking before any destructive change.
 
-## Plan the data model first
+The flow is proven in the `izr-cms` repo. The templates are the generic version
+of its scripts, with project-specific names removed.
 
-1. Inspect the repository, deployment configuration, existing collections, and
-   credentials strategy. Ask about ambiguous behavior, relationships,
-   translations, environments, and data retention before implementing.
-2. Organize definitions by domain, with one collection per YAML file. Folder
-   names are organizational namespaces, not automatic Directus collection
-   prefixes. Collection names must be globally unique.
-3. Decide which collections are managed and who owns existing data. Default to
-   non-destructive changes; ask for explicit approval before enabling automatic
-   removal of collections or fields.
+## The flow in one paragraph
 
-Example structure:
+Collections are declared as YAML in `schemas/<domain>/`. On every container
+start the entrypoint runs Directus `bootstrap`, starts a **temporary private
+server** on `127.0.0.1:8056`, runs `scripts/apply-schemas.js` (schema sync,
+then seeds, then access policies), stops the temporary server, and only then
+starts the public one. If anything fails the container exits nonzero and never
+serves. Changing YAML means rebuilding the image (`make up`).
+
+## Standard layout
 
 ```text
-Dockerfile
-compose.yaml
-entrypoint.sh
-package.json
-scripts/
-  apply-schemas.js
-  seed-data.js
-schemas/
-  content/
-    articles.yaml
-    article_translations.yaml
-seeds/
-  content/
-    articles.yaml
+Dockerfile              pinned directus/directus image + loader baked in
+compose.yaml            postgres + directus, volumes: database, uploads, schema-state
+entrypoint.sh           bootstrap -> temp server -> apply-schemas -> public server
+Makefile                up | down | restart | reseed | logs
+package.json, package-lock.json   only js-yaml (loader dependency)
+.env.example            documented variables; .env is never committed
+schemas/<domain>/*.yaml one collection per file
+seeds/<domain>/*.yaml   one seed file per collection
+policies/apps.yaml      managed read-only policies + keyless service users
+scripts/apply-schemas.js   validate YAML, sync schema, then seed + policies
+scripts/seed-data.js       environment-aware, idempotent seeding
+scripts/apply-policies.js  policy/permission/service-user reconciliation
+scripts/*.test.js          unit tests (node --test scripts/*.test.js)
+scripts/smoke-test.sh      integration check against the running stack
+.github/workflows/smoke-test.yml   PR gate: unit tests + docker smoke test
+AGENTS.md / README.md   document the behavior below (see "Document it")
 ```
 
-## Define collection YAML
+## Setting up a new repo
 
-Use the Directus collection-creation payload shape for `collection`, `schema`,
-`meta`, and `fields`. This is a project-specific format, **not** a Directus
-schema snapshot; the loader must translate it before using the schema API.
-Give every collection an explicit primary key and validate names, field types,
-duplicate names, and supported properties before modifying the database.
-Directus field `type` describes storage; `meta.interface` controls the editor.
+1. Copy `templates/` into the repo root, **including dotfiles** (`.env.example`,
+   `.dockerignore`, `.gitignore`, `.github/`). Merge with, never overwrite,
+   existing files. Put the lockfile in place; run `npm install` to refresh it.
+2. Delete the example `schemas/content/articles*.yaml` and
+   `seeds/content/articles.yaml` once real collections exist. Keep
+   `languages.yaml` only if the project is multilingual; edit its codes.
+3. Edit `smoke-test.yml`: set `SMOKE_COLLECTIONS` (must be readable) and
+   `SMOKE_SEEDED_COLLECTIONS` (must contain rows in dev).
+4. In `policies/apps.yaml`, define one read-only policy per consuming app
+   (website, kiosk, mobile...). Generate every UUID with `uuidgen`; never copy
+   IDs from another project.
+5. The Makefile derives the Compose project name from the directory
+   (`<dir>-cms`); override with `make up PROJECT=...`.
+6. Copy `.env.example` to `.env`, fill in credentials, run `make up`, then run
+   the checks in "Verify".
 
-```yaml
-collection: articles
-schema: {}
-meta:
-  icon: article
-fields:
-  - field: id
-    type: integer
-    schema:
-      is_primary_key: true
-      has_auto_increment: true
-    meta:
-      interface: input
-      hidden: true
-      readonly: true
-  - field: title
-    type: string
-    schema:
-      is_nullable: false
-    meta:
-      interface: input
-      required: true
-```
+Do not change the pinned image version without reading that version's schema
+API docs (see "Schema sync rules").
 
-For relationships, extend the project format explicitly (for example with a
-`relations` array) and translate it into Directus snapshot relations. Create
-all collections and fields before relations; validate both ends and deletion
-behavior. Define aliases with `type: alias` and `schema: null` where needed.
-For multilingual content, model a shared languages collection, a translation
-junction collection, and the parent translations alias and relations. Set
-language direction for right-to-left languages. For WYSIWYG HTML, use a `text`
-field with `meta.interface: input-rich-text-html`; sanitize HTML in clients.
-Directus field validation is not a substitute for database constraints or
-cross-field/business-rule validation.
+## Schema YAML (project format, not a Directus snapshot)
 
-## Bootstrap and synchronize
+One collection per file, allowed top-level keys: `collection`, `schema`,
+`meta`, `fields`, `relations`, `items`. The loader rejects anything else.
 
-1. Pin a Directus image version; use an image version with the capabilities
-   required by the project. Configure the database, persistent uploads, and
-   credentials through environment variables. Keep secrets out of Git and bind
-   local development ports to localhost. With Compose, wait for a healthy
-   database before starting Directus.
-2. The entrypoint should fail on errors, run Directus bootstrap/migrations, then
-   start a temporary Directus server on a private loopback port. Wait for
-   `/server/ping` with a deadline, authenticate with a securely supplied admin
-   account or token, and synchronize schemas before starting the normal server.
-   Ensure signal handling cleans up the temporary process, and do not expose
-   the public service until synchronization succeeds.
-3. Read and validate all YAML definitions first. Fetch `/schema/snapshot`,
-   build a desired snapshot preserving out-of-scope collections, fields,
-   relations, and system-field indexes, then call `/schema/diff` followed by
-   `/schema/apply` with the returned diff and hash. Handle an empty diff without
-   treating it as an error. Never bypass hash/version/vendor checks silently;
-   on a conflict, stop and regenerate/review the diff.
-4. Schema API behavior is version-specific. In particular, Directus 11.17.4
-   uses full version-1 snapshots and does not provide the newer partial
-   snapshot/merge-mode guarantees. Do not send collection YAML directly to
-   `/schema/diff` or assume partial snapshot support without verifying the
-   target version. Preserve snapshot metadata not explicitly owned by YAML.
-5. If mirror mode is explicitly approved, keep a durable, database-specific
-   ownership manifest for previously managed collections. New definitions
-   adopt matching existing collection names, so warn before adoption. Retain
-   unrelated collections and relations; reject deletes that would damage
-   unrelated data. Persist and back up the manifest with the database, handle
-   interrupted applies and concurrent instances safely, and refuse destructive
-   actions when ownership state is missing, invalid, or ambiguous. An empty
-   schema directory must not silently delete everything.
-6. Log actionable errors and exit nonzero on invalid definitions, failed
-   authentication, schema conflicts, or failed apply. Do not log tokens,
-   passwords, or sensitive payloads.
+- Every collection declares a primary key (`schema.is_primary_key: true`).
+  Collection and field names match `^[a-zA-Z][a-zA-Z0-9_]*$`; names are
+  globally unique (folders are namespaces only); never start with `directus_`.
+- `type` is storage; `meta.interface` is the editor. Aliases use
+  `type: alias` and `schema: null`.
+- `relations` is the **complete** list of outgoing relations for that
+  collection once declared. Both ends must exist. A relation to
+  `directus_files` must set `schema.foreign_key_column: id` (system
+  collections are not introspectable). `meta.one_field` must name an alias
+  field on the target.
+- Multilingual content: a `languages` collection (string `code` primary key,
+  `direction` ltr/rtl), a `<x>_translations` junction collection (hidden,
+  with `<x>_id` and `languages_code`), a `translations` alias on the parent,
+  and two relations, exactly as in `templates/schemas/content/`. WYSIWYG HTML
+  is a `text` field with `meta.interface: input-rich-text-html`; clients must
+  sanitize it.
+- Slug-like values: validate with `meta.validation` regex. Uniqueness per
+  language is **not** enforced by the schema; say so in a field note.
+- Inline `items` on a schema file are **reference data** (e.g. languages):
+  seeded in every environment, only when the primary key is missing.
+- Directus validation is not a substitute for DB constraints or business rules;
+  document rules the schema cannot enforce.
 
-**Right:** start from the instance snapshot and preserve unmanaged collections
-before computing a diff. **Wrong:** submit only the YAML collections as a
-full snapshot: Directus may interpret omitted collections as deletions.
+## Schema sync rules (do not weaken)
 
-## Seeds and environment
+`apply-schemas.js` is deliberately conservative. Keep these properties in any
+adaptation:
 
-Separate required reference data from optional example data. Load required
-reference records idempotently by stable primary key after schema apply in all
-environments. Keep examples under `seeds/<namespace>/` and load them in a
-separate module only when an explicit development setting such as
-`CMS_ENV=dev` is present; default to no examples. Never infer development from
-missing configuration.
+1. Read and validate **all** YAML before touching the instance.
+2. Fetch `/schema/snapshot`, build the desired snapshot **from it**, preserving
+   unmanaged collections, fields, relations and system-field indexes, then
+   `POST /schema/diff` and `POST /schema/apply` with the returned diff. Empty
+   diff is success. Never bypass hash/version/vendor checks; on a conflict,
+   stop and review.
+   **Wrong:** submitting only the YAML collections as the snapshot; omitted
+   collections are treated as deletions.
+3. Directus 11.17.4 uses full version-1 snapshots with no partial/merge mode.
+   Verify the API of any other pinned version before changing the sync.
+4. Ownership: a collection named in YAML becomes managed (even if it already
+   exists: warn before adopting). Managed names are recorded in
+   `/directus/schema-state/managed-collections.json` (the `schema-state`
+   volume; back it up with the database). Removing a managed collection or
+   field **deletes its data**. Unrelated collections are always preserved, and
+   deleting a collection or field that an unmanaged collection references is
+   refused. Never allow an empty `schemas/` dir to silently delete everything
+   without explicit approval.
+5. Errors are actionable, exit nonzero, and never print tokens, passwords or
+   payloads.
 
-```yaml
-collection: articles
-items:
-  - title: Example article
-```
+## Seeds and environments
 
-Do not overwrite existing records. Define a repeatable policy for partially
-populated collections and singletons, and make retries safe after interruption.
-Use stable keys or resolve references from returned IDs rather than assuming
-auto-increment IDs. Seed dependencies before dependents and handle nested
-translation records deliberately. Quote dates in YAML to prevent parser-specific
-date coercion. Document whether deleting data causes it to be seeded again.
+- `CMS_ENV` is `dev` (default) or `prod`; any other value is an error.
+  Never infer dev from missing configuration in production deployments: set it
+  explicitly there.
+- `seeds/<domain>/<collection>.yaml`: `collection`, `items`, optional
+  `required: true`. Without `required` the file is **example data, dev only**.
+  With `required: true` it is configuration/reference data loaded in every
+  environment.
+- Seeding is idempotent and non-destructive: collection seeds run only when the
+  collection is empty; singleton seeds only when the singleton has no record;
+  inline schema `items` only when the primary key is missing. Existing rows are
+  never overwritten, so editing a seed does not update existing installs.
+- Nested translation records go inside the parent item. Quote dates in YAML.
+  Seed dependencies before dependents; do not assume auto-increment IDs.
+- `make reseed` wipes database, uploads and schema-state volumes. It is the only
+  way to re-seed. Never run it against data worth keeping.
 
-## Delivery checklist
+## Access policies
 
-- Document startup, environment settings, schema ownership, destructive
-  behavior, backups, seed policy, and how to rebuild after YAML changes.
-- If MCP is needed, verify support in the pinned version and document how to
-  enable it and connect with appropriately scoped permissions; capability and
-  project-level enablement are separate.
-- Unless the user requests otherwise, test with an isolated disposable database:
-  fresh bootstrap, repeat startup, schema changes, preservation of unmanaged
-  data, relation and translation behavior, reference/development seed
-  idempotence, production seed exclusion, and explicit error paths. Never run
-  destructive checks against a user's existing database or volumes.
-- Validate the exact pinned version's API and image startup behavior. Report
-  anything not tested rather than presenting an example as verified.
+- `policies/apps.yaml` defines one least-privilege, **read-only**, no-admin,
+  no-app-access policy per consumer, with a keyless service user. Use filters
+  (`status = published`, publish/expiry windows with `$NOW`) so consumers
+  cannot read drafts; restrict `fields` on sensitive collections instead of
+  `['*']`.
+- The loader refuses to take over an ID already used with different
+  attributes, and refuses unexpected permissions or access links on managed
+  policies. Resolve those manually, never by loosening checks.
+- Service-user tokens are **not** managed. Create them in the admin UI per
+  environment; they are lost on `make reseed`. `ADMIN_TOKEN` (set in `.env`)
+  is the fixed admin token assigned on bootstrap so frontends' read tokens
+  survive reseeds in development; never reuse it in production.
+
+## Docker and entrypoint rules
+
+- Pin `directus/directus:<exact version>`. Secrets come from environment
+  variables (`${VAR:?message}` in Compose), never from Git. Bind the port to
+  `127.0.0.1`. Postgres has a healthcheck; Directus `depends_on` it healthy.
+- Entrypoint: `set -eu`, trap signals and always kill the temporary server,
+  wait for `/server/ping` with a deadline (120 s), authenticate with
+  `ADMIN_EMAIL`/`ADMIN_PASSWORD`, run the sync, `exec` the public server.
+- The Directus container healthcheck is `/server/ping`. Database credentials
+  initialize a **new** volume only; changing them later does not alter an
+  existing Postgres user.
+- MCP: Directus 11.17.4 supports it; enable it in admin settings and connect
+  with a scoped user. Verify support before assuming it on another version.
+
+## Verify before claiming done
+
+1. `node --test scripts/*.test.js` (unit tests; fast, no Docker).
+2. Isolated stack: `docker compose -p <unique> up --build -d --wait` with
+   throwaway credentials (see `smoke-test.yml` for how CI generates them),
+   then `scripts/smoke-test.sh`, then `docker compose -p <unique> down -v`.
+   Use a disposable project name; **never** run `down -v` or `reseed` against
+   a user's existing project or volumes.
+3. Also exercise: repeat startup (second run reports "up to date" and writes
+   nothing), a schema change, preservation of an unmanaged collection, `prod`
+   seed exclusion, and an invalid YAML (container must fail, not serve).
+4. Report anything not run. Unit tests do not cover `apply-schemas.js` (it needs
+   a live Directus); do not claim schema sync was verified without step 2.
+
+## Document it
+
+Every repo's README/AGENTS.md states: how to start (`.env`, `make up`), the
+environment variables, schema ownership and the destructive-removal warning,
+the seed policy (`CMS_ENV`, `required`, "edits don't update existing rows"),
+`make reseed` danger, service-user tokens, backup of the three volumes
+together, and "rebuild the image after editing schemas, seeds, policies or
+scripts". Update docs in the same change as any schema, seed or policy change.
+
+## When requirements are unclear
+
+Inspect the repo and existing instance first. Ask before: enabling automatic
+deletion, adopting existing collections, changing translation modelling,
+choosing relation delete behavior (`CASCADE` / `RESTRICT` / `SET NULL`), and
+anything touching production data.

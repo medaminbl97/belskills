@@ -1,0 +1,60 @@
+name: Smoke test
+
+on:
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CMS_ENV: dev
+      DIRECTUS_PORT: 8055
+      PUBLIC_URL: http://localhost:8055
+      ADMIN_EMAIL: ci@example.com
+      # Unique per run so parallel jobs on one runner cannot collide.
+      COMPOSE_PROJECT_NAME: cms-smoke-${{ github.run_id }}
+      # TODO: list this project's collections.
+      SMOKE_COLLECTIONS: ""
+      SMOKE_SEEDED_COLLECTIONS: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and run unit tests
+        run: |
+          npm ci
+          node --test scripts/*.test.js
+
+      # Throwaway credentials for this run only; the token doubles as the
+      # bearer token the smoke test uses.
+      - name: Generate credentials
+        run: |
+          for name in DB_PASSWORD SECRET ADMIN_PASSWORD ADMIN_TOKEN; do
+            value=$(openssl rand -hex 24)
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+
+      - name: Start the CMS
+        run: docker compose up --build -d --wait --wait-timeout 300
+
+      - name: Smoke test
+        run: scripts/smoke-test.sh
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop the CMS
+        if: always()
+        run: docker compose down -v

@@ -1,0 +1,8 @@
+# Example data: loaded only when CMS_ENV=dev (no `required: true`).
+collection: articles
+items:
+  - status: published
+    published_at: "2026-01-01T09:00:00+01:00"
+    translations:
+      - { languages_code: de, slug: "beispiel-artikel", title: "Beispielartikel", body: "<p>Beispieltext.</p>" }
+      - { languages_code: en, slug: "example-article", title: "Example article", body: "<p>Example body.</p>" }

@@ -16,7 +16,7 @@ Shared agent skills, grouped by tech stack. Each skill is a folder containing a 
 
 | Skill | What it does |
 | --- | --- |
-| [`directus-backend-bootstrap`](directus/directus-backend-bootstrap/SKILL.md) | Designs or implements a Docker-based Directus backend with namespaced YAML schemas, startup sync and optional dev seeds. |
+| [`directus-backend-bootstrap`](directus/directus-backend-bootstrap/SKILL.md) | Our standard Directus flow for every repo: Docker + Postgres, YAML schemas synced at startup, environment-aware seeds, read-only policies, smoke test. Ships copy-ready [`templates/`](directus/directus-backend-bootstrap/templates/). |
 
 ### Tooling — [`tooling/`](tooling/)
 

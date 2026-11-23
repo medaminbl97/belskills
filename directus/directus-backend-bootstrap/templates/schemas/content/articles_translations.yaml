@@ -1,0 +1,93 @@
+collection: articles_translations
+schema: {}
+meta:
+  hidden: true
+  note: Localized article content.
+fields:
+  - field: id
+    type: integer
+    schema:
+      is_primary_key: true
+      has_auto_increment: true
+    meta:
+      interface: input
+      hidden: true
+      readonly: true
+  - field: articles_id
+    type: integer
+    schema:
+      is_nullable: false
+    meta:
+      interface: select-dropdown-m2o
+      special: [m2o]
+      hidden: true
+  - field: languages_code
+    type: string
+    schema:
+      is_nullable: false
+      max_length: 2
+    meta:
+      interface: select-dropdown-m2o
+      special: [m2o]
+      hidden: true
+  - field: title
+    type: string
+    schema:
+      is_nullable: false
+    meta:
+      interface: input
+      required: true
+      hidden: false
+      readonly: false
+  - field: slug
+    type: string
+    schema:
+      is_nullable: true
+    meta:
+      interface: input
+      required: true
+      hidden: false
+      readonly: false
+      note: "URL path segment for this language; lowercase letters, digits, and hyphens only. Must be unique per language; not enforced by the schema."
+      validation:
+        slug:
+          _regex: "^[a-z0-9]+(-[a-z0-9]+)*$"
+  - field: body
+    type: text
+    schema:
+      is_nullable: false
+    meta:
+      interface: input-rich-text-html
+      required: true
+      hidden: false
+      readonly: false
+  - field: meta_title
+    type: string
+    meta:
+      interface: input
+      hidden: false
+      readonly: false
+      note: Optional SEO page title; defaults to title when empty.
+  - field: meta_description
+    type: text
+    meta:
+      interface: input-multiline
+      hidden: false
+      readonly: false
+      note: Optional SEO meta description.
+relations:
+  - field: articles_id
+    related_collection: articles
+    schema:
+      on_delete: CASCADE
+    meta:
+      one_field: translations
+      junction_field: languages_code
+      one_deselect_action: delete
+  - field: languages_code
+    related_collection: languages
+    schema:
+      on_delete: RESTRICT
+    meta:
+      one_field: null
+      junction_field: articles_id
