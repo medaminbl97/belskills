@@ -1,0 +1,10 @@
+# Copy to terraform/projects/<project>/apps/dev.tfvars (and a separate
+# prod.tfvars pointing at the production branch's hostnames/repository, which
+# the root resolves to "main" automatically from `environment`).
+frontend_repository_url = "https://github.com/OWNER/FRONTEND_REPOSITORY.git"
+github_app_name         = "YOUR_DOKPLOY_GITHUB_APP_NAME"
+domains = {
+  frontend = "app-dev.example.com"
+  backend  = "api-dev.example.com"
+}
+# backend_image = "ghcr.io/owner/backend:latest"   # leave unset to build from this root's own repo instead

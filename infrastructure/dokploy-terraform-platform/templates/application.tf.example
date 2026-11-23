@@ -1,0 +1,44 @@
+# Fragment for terraform/projects/<project>/apps, not a complete root.
+# Requires the platform variable (name prefix) in that root.
+# Declare injected inputs, providers and validated HTTPS GitHub URL variable.
+# Replace SERVICE_SLUG, PORT and health endpoint, then merge outputs with peers.
+data "dokploy_github_provider" "apps" {
+  name = var.github_app_name
+}
+
+resource "dokploy_application" "service" {
+  name            = "${var.platform}-${var.project}-${var.environment}-SERVICE_SLUG"
+  app_name_prefix = "${var.platform}-${var.project}-${var.environment}-SERVICE_SLUG"
+  environment_id  = var.environment_id
+  github = {
+    owner        = split("/", trimsuffix(trimsuffix(var.service_repository_url, "/"), ".git"))[3]
+    repository   = split("/", trimsuffix(trimsuffix(var.service_repository_url, "/"), ".git"))[4]
+    branch       = var.environment == "dev" ? "dev" : "main"
+    github_id    = data.dokploy_github_provider.apps.id
+    trigger_type = "push"
+  }
+  build            = { type = "dockerfile", dockerfile = "Dockerfile", context_path = "." }
+  env              = "PORT=3000"
+  auto_deploy      = true
+  deploy_on_change = false
+}
+
+resource "dokploy_domain" "service" {
+  application_id   = dokploy_application.service.id
+  host             = var.service_domain
+  port             = 3000
+  https            = true
+  certificate_type = "letsencrypt"
+}
+
+output "deployments" {
+  value = [{ kind = "application", id = dokploy_application.service.id }]
+}
+
+output "containers" {
+  value = []
+}
+
+output "checks" {
+  value = [{ url = "https://${var.service_domain}/HEALTH_ENDPOINT", discovery = false }]
+}
