@@ -294,8 +294,12 @@ properties in any adaptation:
   wait for `/server/ping` with a deadline (120 s), authenticate with
   `ADMIN_EMAIL`/`ADMIN_PASSWORD`, run `sync.js`, `exec` the public server.
 - Database credentials initialize a **new** volume only; changing them later
-  does not alter an existing Postgres user. If a deployment needs stable volume
-  names across projects, set `name:` on the volumes.
+  does not alter an existing Postgres user. Do **not** pin volume, network or
+  image names in `compose.yaml` (`name:`, `image:`): `make revision` starts a
+  second Compose project from the same file, and fixed names would attach it to
+  your database and delete the volumes on cleanup (`tools/revision.sh` refuses
+  to run). Keep names stable through the Compose project name (`PROJECT` in the
+  Makefile) instead.
 - Makefile: `make up` (creates `.env` if missing, rebuilds, applies revisions,
   waits healthy), `down`, `restart`, `logs`, `test`, `reseed CONFIRM=yes`
   (refuses without the confirmation), `revision m="..."`, `migrate-status`,
