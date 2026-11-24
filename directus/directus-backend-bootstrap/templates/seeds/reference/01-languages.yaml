@@ -1,0 +1,7 @@
+# Reference data: loaded in every environment, only when the key is missing.
+collection: languages
+items:
+  - id: en
+    name: English
+  - id: de
+    name: Deutsch

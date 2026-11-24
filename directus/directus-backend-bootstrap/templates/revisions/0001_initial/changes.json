@@ -1,0 +1,30 @@
+{
+  "up": [
+    "+ articles_translations",
+    "+ articles",
+    "+ languages",
+    "+ articles_translations.id",
+    "+ articles_translations.parent",
+    "+ articles_translations.language",
+    "+ articles_translations.title",
+    "+ articles_translations.body",
+    "+ articles.id",
+    "+ articles.slug",
+    "+ articles.status",
+    "+ articles.price",
+    "+ articles.published_at",
+    "+ articles.expires_at",
+    "+ articles.thumbnail",
+    "+ articles.translations",
+    "+ languages.id",
+    "+ languages.name",
+    "+ relation articles_translations.parent",
+    "+ relation articles_translations.language",
+    "+ relation articles.thumbnail"
+  ],
+  "down": [
+    "- articles",
+    "- articles_translations",
+    "- languages"
+  ]
+}

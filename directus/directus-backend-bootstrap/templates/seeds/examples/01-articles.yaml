@@ -1,0 +1,12 @@
+# Example data: loaded only when CMS_ENV=dev. Every row needs a stable primary
+# key so the seed is idempotent; generate UUIDs once with `uuidgen`.
+collection: articles
+items:
+  - id: 3344c8b5-f913-5f7d-9a33-1840b9ba5a0d
+    slug: example-article
+    status: draft
+    price: 12.50
+  - id: 9ea442cb-1b1a-5568-8e34-c804fbe6867e
+    slug: second-example
+    status: draft
+    price: 0

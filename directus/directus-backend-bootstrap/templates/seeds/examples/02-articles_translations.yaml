@@ -1,0 +1,17 @@
+collection: articles_translations
+items:
+  - id: 4be2fac9-d3c7-50d7-aa40-e4a676461eb2
+    parent: 3344c8b5-f913-5f7d-9a33-1840b9ba5a0d
+    language: en
+    title: Example article
+    body: '<p>Example body.</p>'
+  - id: c75eed41-b8c7-5e8f-a8e6-80e20562a903
+    parent: 3344c8b5-f913-5f7d-9a33-1840b9ba5a0d
+    language: de
+    title: Beispielartikel
+    body: '<p>Beispieltext.</p>'
+  - id: dfc12cf0-c286-5526-8753-a23e909dbff2
+    parent: 9ea442cb-1b1a-5568-8e34-c804fbe6867e
+    language: en
+    title: Second example
+    body: '<p>Another example.</p>'

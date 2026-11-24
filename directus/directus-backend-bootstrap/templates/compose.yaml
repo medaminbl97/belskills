@@ -1,55 +1,66 @@
 services:
   database:
-    image: postgres:16-alpine
+    image: postgres:17.6-alpine
     environment:
       POSTGRES_DB: ${DB_DATABASE:-directus}
       POSTGRES_USER: ${DB_USER:-directus}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your environment or .env file}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Run node tools/init-env.mjs first}
     volumes:
       - database:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
       timeout: 5s
-      retries: 12
+      retries: 20
     restart: unless-stopped
 
   directus:
-    build: .
+    build:
+      context: .
     ports:
-      - "127.0.0.1:${DIRECTUS_PORT:-8055}:8055"
-    depends_on:
-      database:
-        condition: service_healthy
+      - '127.0.0.1:${DIRECTUS_PORT:-8055}:8055'
+    # Also passes optional variables such as the service-user token(s).
+    env_file:
+      - .env
     environment:
-      CMS_ENV: ${CMS_ENV:-dev}
-      SECRET: ${SECRET:?Set SECRET in your environment or .env file}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in your environment or .env file}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in your environment or .env file}
-      # Static token for the default admin user, assigned on `bootstrap`
-      # (first start / after a volume wipe). Keeping this fixed means
-      # frontends' DIRECTUS_READ_TOKEN never has to be regenerated after
-      # `make reseed` — see README.md.
-      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in your environment or .env file}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8055}
+      SECRET: ${SECRET:?Run node tools/init-env.mjs first}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       DB_CLIENT: pg
       DB_HOST: database
       DB_PORT: 5432
       DB_DATABASE: ${DB_DATABASE:-directus}
       DB_USER: ${DB_USER:-directus}
-      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your environment or .env file}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8055}
+      TELEMETRY: 'false'
+      WEBSOCKETS_ENABLED: 'false'
+      CORS_ENABLED: 'true'
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      CORS_METHODS: GET
+      # Directus relation updates can fail on cached, read-only constraint metadata.
+      CACHE_SCHEMA: 'false'
+      CMS_ENV: ${CMS_ENV:-dev}
+      SEED_PUBLISH_DEMO: ${SEED_PUBLISH_DEMO:-false}
+      # Set by `make revision` for its throwaway stack only.
+      REVISIONS_ONLY: ${REVISIONS_ONLY:-false}
     volumes:
       - uploads:/directus/uploads
-      - schema-state:/directus/schema-state
+    depends_on:
+      database:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8055/server/ping || exit 1"]
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8055/server/ping').then(async r => { if (!r.ok || await r.text() !== 'pong') process.exit(1) }).catch(() => process.exit(1))"
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      start_period: 120s
+      retries: 30
     restart: unless-stopped
 
 volumes:
   database:
   uploads:
-  schema-state:
