@@ -1,95 +1,125 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { seedData, seedEnvironment } from './seed-data.js';
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { loadDefinitions } from './schema-model.js'
+import { loadSeeds, seedData, seedEnvironment, seedItems } from './seed-data.js'
 
-const field = (name, extra = {}) => ({ field: name, type: 'string', schema: {}, meta: {}, ...extra });
-const pk = { field: 'id', type: 'integer', schema: { is_primary_key: true }, meta: {} };
-const definitions = [
-  { collection: 'languages', schema: {}, meta: {}, fields: [{ ...pk, field: 'code', type: 'string' }, field('name')],
-    items: [{ code: 'en', name: 'English' }] },
-  { collection: 'articles', schema: {}, meta: {}, fields: [pk, field('title')] },
-  { collection: 'settings', schema: {}, meta: { singleton: true }, fields: [pk, field('mode')] },
-];
+const schemasDir = fileURLToPath(new URL('../schemas/', import.meta.url))
+const seedsDir = fileURLToPath(new URL('../seeds/', import.meta.url))
 
-async function makeSeeds() {
-  const dir = await mkdtemp(path.join(tmpdir(), 'seeds-'));
-  await mkdir(path.join(dir, 'content'));
-  await writeFile(path.join(dir, 'content/articles.yaml'),
-    'collection: articles\nitems:\n  - title: Example\n');
-  await writeFile(path.join(dir, 'content/settings.yaml'),
-    'collection: settings\nrequired: true\nitems:\n  - mode: auto\n');
-  return dir;
-}
-
-function fakeApi() {
-  const rows = new Map();
-  const writes = [];
-  const request = async (endpoint, options = {}) => {
-    const url = new URL(endpoint, 'http://localhost');
-    const collection = url.pathname.split('/')[2];
-    const definition = definitions.find((item) => item.collection === collection);
-    const primary = definition.fields.find((f) => f.schema?.is_primary_key).field;
-    const stored = rows.get(collection) ?? [];
-    if (!options.method) {
-      const filter = url.searchParams.get('filter');
-      return { data: definition.meta.singleton ? stored[0] ?? {}
-        : filter ? stored.filter((row) => row[primary] === JSON.parse(filter)[primary]._eq) : stored };
+// An in-memory stand-in for the Directus items API.
+function fakeApi(rows = {}) {
+  const request = async (endpoint, { method = 'GET', body } = {}) => {
+    const url = new URL(endpoint, 'http://localhost')
+    const [, , collection, id] = url.pathname.split('/')
+    const table = (rows[collection] ??= [])
+    if (method === 'GET') {
+      const [key, condition] = Object.entries(
+        JSON.parse(url.searchParams.get('filter')),
+      )[0]
+      return {
+        data: table.filter((row) => row[key] === condition._eq).slice(0, 1),
+      }
     }
-    writes.push({ collection, method: options.method });
-    stored.push({ [primary]: stored.length + 1, ...options.body });
-    rows.set(collection, stored);
-    return {};
-  };
-  return { rows, writes, request };
+    if (method === 'POST') {
+      table.push({ ...body })
+      return { data: body }
+    }
+    Object.assign(
+      table.find((row) => String(row.id) === decodeURIComponent(id)),
+      body,
+    )
+    return { data: body }
+  }
+  return { rows, request }
 }
 
-test('dev seeds examples, required seeds and inline items; reruns are idempotent', async () => {
-  const seedsDir = await makeSeeds();
-  const api = fakeApi();
-  await seedData(definitions, api.request, 't', { environment: 'dev', seedsDir });
-  assert.deepEqual([...new Set(api.writes.map((w) => w.collection))].sort(), ['articles', 'languages', 'settings']);
-  const count = api.writes.length;
-  await seedData(definitions, api.request, 't', { environment: 'dev', seedsDir });
-  assert.equal(api.writes.length, count);
-});
+const seeds = [
+  {
+    collection: 'articles',
+    key: 'id',
+    items: [
+      { id: 'a', status: 'draft' },
+      { id: 'b', status: 'draft' },
+    ],
+  },
+]
 
-test('prod seeds only inline items and seed files marked required', async () => {
-  const api = fakeApi();
-  await seedData(definitions, api.request, 't', { environment: 'prod', seedsDir: await makeSeeds() });
-  assert.deepEqual([...new Set(api.writes.map((w) => w.collection))].sort(), ['languages', 'settings']);
-});
+test('creates missing rows and never overwrites existing ones', async () => {
+  const api = fakeApi({ articles: [{ id: 'a', status: 'archived' }] })
+  const result = await seedItems(api.request, 't', seeds)
+  assert.deepEqual(result, { created: 1, published: 0 })
+  assert.equal(
+    api.rows.articles.find((row) => row.id === 'a').status,
+    'archived',
+  )
+})
 
-test('existing records are never overwritten', async () => {
-  const api = fakeApi();
-  api.rows.set('languages', [{ code: 'en', name: 'Authored' }]);
-  api.rows.set('articles', [{ id: 1, title: 'Authored' }]);
-  api.rows.set('settings', [{ id: 7, mode: 'manual' }]);
-  await seedData(definitions, api.request, 't', { environment: 'dev', seedsDir: await makeSeeds() });
-  assert.deepEqual(api.writes, []);
-});
+test('is idempotent', async () => {
+  const api = fakeApi()
+  await seedItems(api.request, 't', seeds)
+  const second = await seedItems(api.request, 't', seeds)
+  assert.deepEqual(second, { created: 0, published: 0 })
+  assert.equal(api.rows.articles.length, 2)
+})
 
-test('missing environment defaults to dev; unknown values fail before any request', async () => {
-  const previous = process.env.CMS_ENV;
-  delete process.env.CMS_ENV;
+test('publishDraft publishes new and still-draft seed rows only', async () => {
+  const api = fakeApi({ articles: [{ id: 'a', status: 'archived' }] })
+  const result = await seedItems(api.request, 't', seeds, {
+    publishDraft: true,
+  })
+  assert.deepEqual(result, { created: 1, published: 1 })
+  const status = (id) => api.rows.articles.find((r) => r.id === id).status
+  assert.equal(status('a'), 'archived')
+  assert.equal(status('b'), 'published')
+})
+
+test('example seeds are skipped outside dev, reference seeds are not', async () => {
+  const definitions = await loadDefinitions(schemasDir)
+  const prod = fakeApi()
+  await seedData(definitions, prod.request, 't', {
+    environment: 'prod',
+    seedsDir,
+  })
+  assert.ok(prod.rows.languages.length > 0)
+  assert.equal(prod.rows.articles, undefined)
+
+  const dev = fakeApi()
+  await seedData(definitions, dev.request, 't', {
+    environment: 'dev',
+    seedsDir,
+  })
+  assert.ok(dev.rows.articles.length > 0)
+})
+
+test('CMS_ENV accepts only dev or prod', () => {
+  assert.equal(seedEnvironment('prod'), 'prod')
+  assert.throws(() => seedEnvironment('staging'), /dev" or "prod/)
+})
+
+test('rejects a seed for an unmanaged collection', async () => {
+  const definitions = await loadDefinitions(schemasDir)
+  const root = await mkdtemp(path.join(os.tmpdir(), 'directus-seeds-'))
   try {
-    assert.equal(seedEnvironment(), 'dev');
+    await mkdir(path.join(root, 'reference'))
+    await writeFile(
+      path.join(root, 'reference', '01-x.yaml'),
+      'collection: not_a_collection\nitems:\n  - id: a\n',
+    )
+    await assert.rejects(
+      loadSeeds(root, 'reference', definitions),
+      /unmanaged collection/,
+    )
   } finally {
-    if (previous !== undefined) process.env.CMS_ENV = previous;
+    await rm(root, { recursive: true, force: true })
   }
-  for (const environment of ['', 'production', 'invalid']) {
-    await assert.rejects(seedData(definitions, () => assert.fail('unexpected request'), 't', { environment }),
-      /CMS_ENV must be "dev" or "prod"/);
-  }
-});
+})
 
-test('rejects seeds for unmanaged collections and unknown keys', async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'seeds-bad-'));
-  await mkdir(path.join(dir, 'x'));
-  await writeFile(path.join(dir, 'x/a.yaml'), 'collection: nope\nitems:\n  - a: 1\n');
-  await assert.rejects(seedData(definitions, fakeApi().request, 't', { environment: 'dev', seedsDir: dir }), /unmanaged/);
-  await writeFile(path.join(dir, 'x/a.yaml'), 'collection: articles\nbogus: 1\nitems:\n  - title: x\n');
-  await assert.rejects(seedData(definitions, fakeApi().request, 't', { environment: 'dev', seedsDir: dir }), /Invalid seed file/);
-});
+test('the repository seeds load', async () => {
+  const definitions = await loadDefinitions(schemasDir)
+  assert.ok((await loadSeeds(seedsDir, 'reference', definitions)).length > 0)
+  assert.ok((await loadSeeds(seedsDir, 'examples', definitions)).length > 0)
+})
