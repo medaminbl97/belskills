@@ -1,49 +1,19 @@
 collection: languages
 schema: {}
 meta:
-  icon: language
-  display_template: "{{name}}"
-  note: Supported content languages.
+  icon: translate
+  accountability: all
 fields:
-  - field: code
+  - field: id
     type: string
     schema:
       is_primary_key: true
       is_nullable: false
-      max_length: 2
     meta:
-      interface: select-dropdown
-      required: true
-      options:
-        choices:
-          - { text: German, value: de }
-          - { text: English, value: en }
-          - { text: Arabic, value: ar }
-      validation:
-        code:
-          _in: [de, en, ar]
+      interface: input
   - field: name
     type: string
     schema:
       is_nullable: false
     meta:
       interface: input
-      required: true
-  - field: direction
-    type: string
-    schema:
-      is_nullable: false
-    meta:
-      interface: select-dropdown
-      required: true
-      options:
-        choices:
-          - { text: Left to right, value: ltr }
-          - { text: Right to left, value: rtl }
-      validation:
-        direction:
-          _in: [ltr, rtl]
-items:
-  - { code: de, name: German, direction: ltr }
-  - { code: en, name: English, direction: ltr }
-  - { code: ar, name: Arabic, direction: rtl }

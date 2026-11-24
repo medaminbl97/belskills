@@ -2,27 +2,28 @@ collection: articles
 schema: {}
 meta:
   icon: newspaper
-  note: Articles.
+  accountability: all
 fields:
   - field: id
-    type: integer
+    type: uuid
     schema:
       is_primary_key: true
-      has_auto_increment: true
+      is_nullable: false
     meta:
       interface: input
+      special:
+        - uuid
       hidden: true
-      readonly: true
-  - field: translations
-    type: alias
-    schema: null
+  - field: slug
+    type: string
+    schema:
+      is_nullable: false
+      is_unique: true
     meta:
-      interface: translations
-      special: [translations]
-      options:
-        languageField: name
-        languageDirectionField: direction
-        defaultLanguage: de
+      interface: input
+      validation:
+        slug:
+          _regex: '^[a-z0-9]+(-[a-z0-9]+)*$'
   - field: status
     type: string
     schema:
@@ -30,15 +31,38 @@ fields:
       default_value: draft
     meta:
       interface: select-dropdown
-      required: true
       options:
         choices:
-          - { text: Draft, value: draft }
-          - { text: Published, value: published }
-          - { text: Archived, value: archived }
+          - text: draft
+            value: draft
+          - text: published
+            value: published
+          - text: archived
+            value: archived
       validation:
         status:
-          _in: [draft, published, archived]
+          _in:
+            - draft
+            - published
+            - archived
+  # Money is stored as exact decimals in euros, never as float/double, and never
+  # as integer cents. Directus returns it as a string such as "12.50".
+  - field: price
+    type: decimal
+    schema:
+      is_nullable: false
+      default_value: 0
+      numeric_precision: 12
+      numeric_scale: 2
+    meta:
+      interface: input
+      note: Amount in euros (EUR) with two decimal places.
+      options:
+        min: 0
+        step: 0.01
+      validation:
+        price:
+          _gte: 0
   - field: published_at
     type: timestamp
     meta:
@@ -55,8 +79,18 @@ fields:
       is_nullable: true
     meta:
       interface: file-image
-      special: [file]
-      note: Optional thumbnail shown on the article card.
+      special:
+        - file
+  - field: translations
+    type: alias
+    schema: null
+    meta:
+      special:
+        - translations
+      interface: translations
+      options:
+        languageField: name
+        defaultLanguage: en
 relations:
   - field: thumbnail
     related_collection: directus_files

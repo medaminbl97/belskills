@@ -1,0 +1,46 @@
+# The built-in Public policy: what anonymous visitors (the website) may read.
+# Read-only, published rows only, and an explicit field list per collection.
+policy: public
+permissions:
+  - collection: languages
+    action: read
+    fields:
+      - id
+      - name
+  - collection: articles
+    action: read
+    fields:
+      - id
+      - slug
+      - status
+      - price
+      - published_at
+      - expires_at
+      - thumbnail
+      - translations
+    permissions:
+      _and:
+        - status:
+            _eq: published
+        - _or:
+            - published_at:
+                _null: true
+            - published_at:
+                _lte: $NOW
+        - _or:
+            - expires_at:
+                _null: true
+            - expires_at:
+                _gte: $NOW
+  - collection: articles_translations
+    action: read
+    fields:
+      - id
+      - parent
+      - language
+      - title
+      - body
+    permissions:
+      parent:
+        status:
+          _eq: published

@@ -1,93 +1,62 @@
 collection: articles_translations
 schema: {}
 meta:
+  icon: article
+  accountability: all
   hidden: true
-  note: Localized article content.
 fields:
   - field: id
-    type: integer
+    type: uuid
     schema:
       is_primary_key: true
-      has_auto_increment: true
+      is_nullable: false
     meta:
       interface: input
+      special:
+        - uuid
       hidden: true
-      readonly: true
-  - field: articles_id
-    type: integer
+  - field: parent
+    type: uuid
     schema:
       is_nullable: false
     meta:
       interface: select-dropdown-m2o
-      special: [m2o]
-      hidden: true
-  - field: languages_code
+      special:
+        - m2o
+  - field: language
     type: string
     schema:
       is_nullable: false
-      max_length: 2
     meta:
       interface: select-dropdown-m2o
-      special: [m2o]
-      hidden: true
+      special:
+        - m2o
   - field: title
     type: string
     schema:
       is_nullable: false
     meta:
       interface: input
-      required: true
-      hidden: false
-      readonly: false
-  - field: slug
-    type: string
-    schema:
-      is_nullable: true
-    meta:
-      interface: input
-      required: true
-      hidden: false
-      readonly: false
-      note: "URL path segment for this language; lowercase letters, digits, and hyphens only. Must be unique per language; not enforced by the schema."
-      validation:
-        slug:
-          _regex: "^[a-z0-9]+(-[a-z0-9]+)*$"
+  # Rich text is stored as HTML in a text field; clients must sanitize it.
   - field: body
     type: text
     schema:
-      is_nullable: false
+      is_nullable: true
     meta:
       interface: input-rich-text-html
-      required: true
-      hidden: false
-      readonly: false
-  - field: meta_title
-    type: string
-    meta:
-      interface: input
-      hidden: false
-      readonly: false
-      note: Optional SEO page title; defaults to title when empty.
-  - field: meta_description
-    type: text
-    meta:
-      interface: input-multiline
-      hidden: false
-      readonly: false
-      note: Optional SEO meta description.
+      note: Uniqueness per language is not enforced by the schema.
 relations:
-  - field: articles_id
+  - field: parent
     related_collection: articles
     schema:
       on_delete: CASCADE
     meta:
       one_field: translations
-      junction_field: languages_code
-      one_deselect_action: delete
-  - field: languages_code
+      junction_field: language
+  - field: language
     related_collection: languages
     schema:
       on_delete: RESTRICT
     meta:
       one_field: null
-      junction_field: articles_id
+      junction_field: parent
