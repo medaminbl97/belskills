@@ -22,6 +22,8 @@ const entries = [
   ['DB_PASSWORD', value()],
   ['SECRET', value()],
   ['CMS_ENV', 'dev'],
+  // One per managed service user: the token_env named in access/service.yaml.
+  ['SERVICE_TOKEN', value()],
 ].filter(([key]) => !present.has(key))
 
 if (entries.length) {

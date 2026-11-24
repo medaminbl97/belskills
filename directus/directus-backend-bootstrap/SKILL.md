@@ -73,8 +73,9 @@ extend them instead. Project-specific one-off checks go in `tools/`.
    `.dockerignore`, `.gitignore`, `.github/`). Merge with, never overwrite,
    existing files. In a monorepo put it in a folder (for example `directus/`)
    and adjust the workflow paths.
-2. Replace the example `articles` collections, seeds and `access/public.yaml`
-   with the real ones. Keep `languages` only if the project is multilingual.
+2. Replace the example `articles` collections, seeds, `access/public.yaml` and
+   `access/service.yaml` with the real ones (no service user: delete the file and
+   drop `SERVICE_TOKEN` from `tools/init-env.mjs` and `.env.example`). Keep `languages` only if the project is multilingual.
    Delete the shipped `revisions/0001_initial/` (it describes the example) and
    create your own: `make revision m="initial"`.
 3. Set `SMOKE_COLLECTIONS`, `SMOKE_SEEDED_COLLECTIONS`, `SMOKE_PUBLIC_COLLECTION`
@@ -256,20 +257,11 @@ properties in any adaptation:
   translation rows filtered through their parent. Renaming a field means
   updating these lists in the same change.
 - A managed policy file has `policy` (name, flags), optional `role` and `user`,
-  and `permissions`:
-
-  ```yaml
-  role: { name: Service }
-  policy: { name: service-policy, icon: lock, admin_access: false, app_access: false }
-  user: { email: service@example.com, first_name: Service, last_name: User, token_env: SERVICE_TOKEN }
-  permissions:
-    - { collection: articles, action: read, fields: [id, slug] }
-    - collection: articles
-      action: update
-      fields: [status]
-      permissions: { status: { _eq: draft } }     # which rows
-      validation: { status: { _in: [draft, published] } }   # which values
-  ```
+  and `permissions`. `templates/access/service.yaml` is a complete, commented
+  example: a role, a policy, a user whose `token_env` names the variable that
+  holds its token, a read grant with an explicit field list, and an update grant
+  limited by `permissions` (which rows) and `validation` (which values). Copy it
+  for every service user. A field a user may write must also be in its read list.
 
 - Policies are matched by name and **owned by the YAML**: the sync overwrites
   their flags and permissions, so UI edits do not survive a restart. Admin access
@@ -277,12 +269,27 @@ properties in any adaptation:
   write permissions limited by `permissions` and `validation`.
 - Permissions that exist on a managed policy but are not in the YAML are
   reported as a warning, never deleted.
-- The service user's static token comes from the environment variable named in
-  `token_env` (32+ characters: letters, digits, `-`, `_`); with no value the user
-  is skipped. Pass it through `compose.yaml`/the deployment, never commit it.
-  Generate random values with `tools/init-env.mjs` for local use.
+- **A service user's token comes from the YAML and the environment.** The file
+  names the variable (`user.token_env`; a user without a role, an email and a
+  `token_env` is rejected). On every start `apply-policies.js` reads that name from
+  the YAML, takes the expected token from that environment variable, checks its
+  form (32+ characters: letters, digits, `-`, `_`) and applies it: it creates the
+  user, or updates the existing one (role, `active` status and static token), so
+  the user always matches the YAML and the environment. An unset variable skips the
+  user with a log line (features that need it stay disabled); a malformed value
+  fails the start. The token itself is never in the YAML, the image or the logs.
+  - Delivering the variable: `env_file: .env` in `compose.yaml` forwards everything
+    in `.env`, a deployment sets it explicitly (for example Terraform), and
+    `.env.example` documents the name. Never commit a value.
+  - Local values: the templates' `tools/init-env.mjs` creates the Directus basics
+    and `SERVICE_TOKEN`, the `token_env` of the example user. When you add a service
+    user, add its `token_env` there (and to `.env.example`) so local setups and CI
+    get a random value too. A copy of the same token that another app needs
+    (the website's, for example) is a separate variable on that side.
 - Static admin/read tokens created in the Directus UI are **not** managed and are
-  lost on `make reseed`.
+  lost on `make reseed`. Do not edit a managed user in the UI either: saving it can
+  replace its token (the API then answers 401), and the next start resets it from
+  the environment, so restarting fixes it.
 
 ## Docker, Compose and the Makefile
 

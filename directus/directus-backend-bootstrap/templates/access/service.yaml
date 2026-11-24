@@ -1,0 +1,49 @@
+# A managed service user with its own least-privilege role and policy, for example
+# a publishing job or the website server. The sync creates all three and keeps them
+# equal to this file on every start (edits in the Directus UI do not survive).
+role:
+  name: Service
+  icon: support_agent
+  description: 'Reads articles and publishes drafts.'
+policy:
+  name: service-policy
+  icon: lock
+  admin_access: false
+  app_access: false
+  description: Least-privilege access for the service user.
+user:
+  email: service@example.com
+  first_name: Service
+  last_name: User
+  # Name of the environment variable that holds this user's static token. The loader
+  # reads the name here, takes the token from that variable (32+ characters: letters,
+  # digits, - or _) and applies it to the user on every start. Without a value the
+  # user is skipped. tools/init-env.mjs creates a random one in .env; a deployment
+  # sets it by hand. Never put the token itself in this file.
+  token_env: SERVICE_TOKEN
+permissions:
+  # Read every article, drafts included, with an explicit field list. A field the
+  # user may write (status below) must be readable too, or it is missing from the
+  # OpenAPI types generated with this user's token.
+  - collection: articles
+    action: read
+    fields:
+      - id
+      - slug
+      - status
+      - published_at
+  # `permissions` says which rows may be changed, `validation` which values may be
+  # written: this user may only turn a draft into a published article or keep it a
+  # draft, and nothing else about it.
+  - collection: articles
+    action: update
+    fields:
+      - status
+    permissions:
+      status:
+        _eq: draft
+    validation:
+      status:
+        _in:
+          - draft
+          - published
