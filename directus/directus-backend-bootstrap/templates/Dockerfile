@@ -1,16 +1,19 @@
-FROM directus/directus:11.17.4
+ARG DIRECTUS_VERSION=11.17.4
+FROM directus/directus:${DIRECTUS_VERSION}
 
+# The schemas, revisions, access policies, seeds and the loader that applies them
+# are part of the image. Rebuild it to ship a change; nothing is mounted at runtime.
 USER root
-COPY package.json package-lock.json /opt/schema-loader/
-RUN cd /opt/schema-loader && npm ci --omit=dev \
-    && mkdir -p /directus/schema-state \
-    && chown node:node /directus/schema-state
-
-COPY --chown=node:node scripts/ /opt/schema-loader/scripts/
-COPY --chown=node:node schemas/ /directus/schemas/
-COPY --chown=node:node policies/ /directus/policies/
-COPY --chown=node:node seeds/ /directus/seeds/
-COPY --chown=node:node entrypoint.sh /opt/schema-loader/entrypoint.sh
+WORKDIR /opt/schema-loader
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && chown -R node:node /opt/schema-loader
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node schemas ./schemas
+COPY --chown=node:node revisions ./revisions
+COPY --chown=node:node access ./access
+COPY --chown=node:node seeds ./seeds
+COPY --chown=node:node --chmod=755 entrypoint.sh ./entrypoint.sh
 
 USER node
-CMD ["sh", "/opt/schema-loader/entrypoint.sh"]
+WORKDIR /directus
+CMD ["/opt/schema-loader/entrypoint.sh"]
