@@ -20,6 +20,17 @@ compose="docker compose -p $gen --env-file .env"
 cleanup() { $compose down -v >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+# The throwaway stack must not share anything with your real one. Fixed volume
+# names (`name:` in compose.yaml) would attach it to your database, and the
+# cleanup below runs `down -v`. Resolved names must all start with the gen project.
+shared=$($compose config | grep -E '^    name: ' | grep -v "^    name: ${gen}_" || true)
+if [ -n "$shared" ]; then
+  echo "compose.yaml pins names that are not project-scoped, so the throwaway stack would share them:"
+  echo "$shared"
+  echo "Remove the fixed 'name:' lines (volumes, networks) and use the Compose project name instead."
+  exit 1
+fi
+
 echo "Starting a throwaway database at ${last:-the empty schema}..."
 DIRECTUS_PORT=0 REVISIONS_ONLY=true $compose up --build -d --wait database directus >/dev/null 2>&1 \
   || { $compose logs directus | tail -8; exit 1; }
