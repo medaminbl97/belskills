@@ -17,6 +17,21 @@ stop_temporary() {
 trap 'stop_temporary; exit 143' TERM INT
 trap stop_temporary EXIT
 
+# Wait until PostgreSQL accepts connections. After a host reboot the database
+# container can come up after this one, and depends_on does not order restarts.
+# Without DB_HOST (an external database URL, say) nothing is awaited.
+if [ -n "${DB_HOST:-}" ]; then
+  deadline=$(($(date +%s) + ${DB_WAIT_SECONDS:-300}))
+  until node -e "const s = require('node:net').connect({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 5432), timeout: 3000 }); s.on('connect', () => process.exit(0)); s.on('timeout', () => process.exit(1)); s.on('error', () => process.exit(1))"; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "PostgreSQL at $DB_HOST:${DB_PORT:-5432} did not answer within ${DB_WAIT_SECONDS:-300}s" >&2
+      exit 1
+    fi
+    echo "Waiting for PostgreSQL at $DB_HOST:${DB_PORT:-5432}..."
+    sleep 3
+  done
+fi
+
 node cli.js bootstrap
 
 HOST=127.0.0.1 PORT="$internal_port" node cli.js start >/dev/null 2>&1 &

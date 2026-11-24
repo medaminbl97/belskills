@@ -297,7 +297,8 @@ properties in any adaptation:
   variables (`${VAR:?message}` in Compose), never from Git. Bind the port to
   `127.0.0.1`. Postgres has a healthcheck; Directus `depends_on` it healthy.
   `CACHE_SCHEMA=false` (relation updates can fail on cached constraint data).
-- Entrypoint: `set -eu`, trap signals and always kill the temporary server,
+- Entrypoint: `set -eu`, wait for PostgreSQL (`DB_HOST`/`DB_PORT`, `DB_WAIT_SECONDS`; `depends_on` does
+  not order restarts after a host reboot), trap signals and always kill the temporary server,
   wait for `/server/ping` with a deadline (120 s), authenticate with
   `ADMIN_EMAIL`/`ADMIN_PASSWORD`, run `sync.js`, `exec` the public server.
 - Database credentials initialize a **new** volume only; changing them later
