@@ -117,6 +117,37 @@ refuses `destroy` while any *downstream* layer's state still has resources, so
 destruction goes `apps` → `databases` → `secrets` → … one explicit `STACK=` at
 a time.
 
+## 4b. Details a working implementation settled on
+
+Reference size: about 830 lines of stdlib Python plus 47 unit tests (no
+infrastructure needed, `make test`). Worth copying as behaviour:
+
+- **SSH is optional** (`DOKPLOY_SSH`). Without it, `Rollout` drops `containers`
+  and the Swarm-task check, prints a warning, and relies on the Dokploy
+  deployment status plus HTTP checks. With it, preflight also runs `docker
+  version` on the host. Keep both paths tested.
+- **Unsupported features fail loudly**: `ENABLE_OIDC=true` raises a `StackError`
+  when there is no OIDC layer; a `discovery: true` check is refused likewise.
+  Never accept a flag and ignore it.
+- **Config validation**: `PLATFORM_NAME` must match `^[a-z][a-z0-9-]{0,15}$`; feature
+  values tolerate quotes (`"true"`); missing variables are named in the error.
+- **Safety**: `-target` rejected in every code path; `TF_APPLY_ARGS` accepts only
+  `-auto-approve`; HTTP errors never leak response bodies; no shared
+  `TF_PLUGIN_CACHE_DIR` reaches Terraform; stage tfvars passed only if present.
+- **Preflight**: Terraform >= 1.11 (write-only secrets), `https://` endpoint,
+  Dokploy key accepted, optional `docker version` over SSH.
+- **Extra commands**: `validate` (init `-backend=false` plus validate for every
+  active root), `output` (non-sensitive outputs of one layer, e.g. a webhook URL
+  to register elsewhere), `steps` (Make target printing the install and
+  everyday flow), `test`.
+- **Redeploy rule**: a layer is redeployed on every apply (apps pull the
+  branch's latest code, the idempotent database job re-runs) except those in
+  `LEAVE_ALONE_WHEN_UNCHANGED` (vault, Postgres) when the plan changed nothing
+  and it is not the first apply.
+- **Make**: retired knobs (`SERVICES`, `DEPLOYMENT_STAGE`, `TARGET`) are an
+  `$(error)`; `destroy` refuses `ENV=all`; Make reads the Postgres feature
+  from the orchestrator's `Config`, so the flag lives in one place.
+
 ## 5. Make layering
 
 ```text

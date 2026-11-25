@@ -144,3 +144,24 @@ Every template is deliberately non-deployable until placeholders
    copying `templates/new-project/`; add a layer *kind* only deliberately, and
    update the orchestrator, its tests, the destroy-guard map and Make targets.
 8. Do not disable TLS verification. Do not publish database ports.
+9. **Survive a host reboot.** Every long-running Compose service (vault, its
+   Postgres/Redis, shared Postgres) sets `restart: always`; a one-shot job sets
+   `restart: "no"`; Swarm apps restart themselves. `depends_on` only orders
+   `docker compose up`, so a service that needs another (an app needing its
+   database) must wait or retry itself at startup. A stack deployed before the
+   policy existed keeps running without it until redeployed. Details in
+   [references/operations.md](references/operations.md) section 4.
+10. Compose layers set `delete_volumes = false` and `deploy_on_change = false`
+    explicitly; the orchestrator, not a Terraform edit, triggers redeploys.
+11. **Prefer generated service tokens.** If a component can take its own service
+    token from an environment variable and apply it at startup, generate the
+    token in the secrets layer and give the same value to its consumers: no
+    manual step and no first-install chicken and egg. Fall back to a manual
+    token only when the issuing system cannot be told the value.
+12. Consumers reach a backend by its private Swarm name on `dokploy-network`
+    (`http://<app_name>:<port>`), so server tokens never cross the public
+    network; build arguments carry public values only.
+13. `.example` files and `.env.example` hold placeholders only. If a real key
+    ever lands in one, treat it as leaked: rotate it, do not just remove it.
+    Commit `.terraform.lock.hcl` of every root; ignore `.state/`, `.env`,
+    `*.tfvars` (keep `!*.tfvars.example`).

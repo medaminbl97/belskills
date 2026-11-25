@@ -2,8 +2,11 @@
 
 ## 1. First-install walkthrough
 
-Prerequisites (verify, do not assume): Python 3.8+, Terraform ≥ 1.11, Make, SSH
-with Docker-inspection rights on the host, Dokploy ≥ 0.31.0, Docker Compose ≥
+Prerequisites (verify, do not assume): Python 3.8+, Terraform ≥ 1.11 (write-only
+secrets need it; preflight checks), Make, optionally SSH with Docker-inspection
+rights on the host (`DOKPLOY_SSH`; without it readiness rests on Dokploy's
+deployment status and the HTTP checks, and a failed database job only shows up as
+a backend whose health check times out), Dokploy ≥ 0.31.0, Docker Compose ≥
 2.23.1 on the host, external network `dokploy-network`, DNS for every hostname
 with 80/443 reaching Traefik and valid TLS (never disable certificate
 verification), and a Dokploy GitHub App already installed with access to every
@@ -31,9 +34,14 @@ cp terraform/projects/<project>/apps/dev.tfvars.example           terraform/proj
    the project's `secrets/dev.tfvars` (never into a committed `.example`).
 4. `make project-secrets ENV=dev PROJECT=<project>`, then (if enabled)
    `make project-databases ENV=dev PROJECT=<project>`.
-5. **First-install ordering (chicken and egg).** If a frontend needs a token that
-   is issued *by the deployed backend* (e.g. a read-only service-account token),
-   the apps root's `lifecycle.precondition` will refuse to plan until it exists.
+5. **First-install ordering (chicken and egg), only if unavoidable.** First try to
+   remove it: if the backend can read its service token from an environment
+   variable and apply it at startup (Directus: `token_env` on the service user),
+   generate that token in the project's `secrets` layer and inject the same value
+   into the consumer. The token then exists before the backend does and this
+   whole step disappears. Only when the issuing system mints the value itself
+   (the frontend needs a token *issued by the deployed backend*), the apps root's
+   `lifecycle.precondition` will refuse to plan until it exists.
    Resolve it explicitly and reviewably; do not fake a value:
    - Temporarily scope the root to the backend only (comment out the frontend
      resource, its precondition and outputs), or use a short-lived secondary
@@ -86,6 +94,8 @@ cp terraform/projects/<project>/apps/dev.tfvars.example           terraform/proj
 
 ## 3. Validation, troubleshooting, destruction
 
+(Section 4, after this one, covers host reboots and decommissioning.)
+
 - `make validate PROJECT=<project>` initializes and validates every active root
   without a backend or live-service connection (may download providers).
 - `make plan STACK=<layer> ENV=dev PROJECT=<project>` needs that layer's
@@ -112,3 +122,38 @@ cp terraform/projects/<project>/apps/dev.tfvars.example           terraform/proj
 - Before trusting this skill on anything affecting production, re-read the live
   Makefile, `make/`, orchestrator scripts, `modules/database` and an existing
   project's roots in the repo you are working in.
+
+## 4. Host reboots, redeploys and decommissioning
+
+**Reboot resilience** (learned the hard way: Compose stacks without a restart
+policy stayed down after a reboot):
+
+- Stateful Compose services (vault, its Postgres and Redis, shared Postgres) use
+  `restart: always`. One-shot jobs (the database job) use `restart: "no"`, or
+  they re-run on every boot. Swarm applications restart themselves.
+- `depends_on` (even with `service_healthy`) only orders `docker compose up`.
+  After a reboot Docker restarts every container independently, so a consumer
+  must wait or retry itself: `restart: always` for Compose services; for an app
+  that crashes without its database, a startup wait loop in its entrypoint
+  (e.g. poll `DB_HOST:DB_PORT` up to `DB_WAIT_SECONDS`, default 300).
+- No app should depend on the vault at runtime: secrets are injected at deploy
+  time, so a vault that starts late does not stop the apps.
+- The host must start Docker at boot (`systemctl is-enabled docker`) and Dokploy
+  itself must come back; check both once and say so in the repo README.
+- A stack deployed before the policy existed keeps running without it until it
+  is redeployed (`deploy_on_change = false` means editing the file alone does
+  not redeploy). Rerun the layer through the orchestrator (`bootstrap-global`
+  for the vault, `bootstrap-env` for Postgres); data volumes stay; expect a
+  short outage. After a reboot that already happened, start the stacks from the
+  Dokploy UI or `docker start` on the host, vault database first.
+- Verify with `docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' <container>`.
+
+**Decommissioning a previous setup.** Move the old root, its state, tfvars and
+secret material unchanged into a git-ignored `.legacy/`. Destroy its live
+resources only with explicit approval (`terraform plan -destroy` first, review,
+then destroy; volumes may remain), then delete `.legacy/` by hand.
+
+**Unverified code.** Keep a "Not verified yet" paragraph in the repo README
+until a real `plan`/`apply` has passed on each layer; record Dokploy response
+fields the API spec does not document (the orchestrator matches deployments by
+their `description`/`title`).

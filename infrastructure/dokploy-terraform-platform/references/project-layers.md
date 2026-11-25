@@ -104,6 +104,28 @@ env = <<-EOT
 EOT
 ```
 
+Patterns that worked in a real project:
+
+- **One repository, several apps**: a single `repository_url` variable; each app
+  picks its own `build = { dockerfile, context_path }` (e.g. backend
+  `directus/Dockerfile` with context `directus`, frontend `Dockerfile` with `.`).
+  Set `app_name_prefix` so Swarm names are stable.
+- **Private service URL**: the frontend gets
+  `BACKEND_URL=http://${dokploy_application.backend.app_name}:<port>` and the
+  token as a runtime env var, so the token never leaves `dokploy-network`;
+  `build_args` carries only public values (e.g. the public API URL a bundler
+  inlines).
+- **One generated token, two consumers**: generate `backend/SERVICE_TOKEN` once;
+  the backend applies it at startup and the frontend receives the same value.
+- **Optional env lines**: build `env` with `join("\n", compact([...]))` and `""`
+  for disabled entries instead of heredoc `%{ if }` blocks.
+- **Conditional manual secrets**: a feature variable (e.g. `payment_provider`
+  empty/`mock`/`stripe`) guards the manual vault values; a `lifecycle.precondition`
+  names the exact vault path to fill before the apply can plan. Add a
+  `precondition` that the shared Postgres host was injected.
+- **Stage to behaviour**: derive branch (`dev`/`main`) and environment flags
+  (e.g. `CMS_ENV`) from `var.environment` in one `locals` block; never hardcode.
+
 `variables.tf` for this root declares: injected inputs (`dokploy_endpoint`,
 `dokploy_api_key`, `infisical_*`, `platform`, `project`, `environment` validated
 to `dev`/`prod`, `environment_id`, and `postgres_host` / `oidc_url` with

@@ -63,6 +63,8 @@ resource "random_password" "service" {
 resource "dokploy_compose" "infisical" {
   name           = "${var.platform}-infisical"
   environment_id = var.environment_id        # the "secrets" project, prod environment
+  delete_volumes   = false                   # never delete the vault's data with the layer
+  deploy_on_change = false                   # the orchestrator decides when to redeploy
   env = <<-EOT
     ENCRYPTION_KEY=${random_bytes.encryption_key.hex}
     AUTH_SECRET=${random_bytes.auth_secret.base64}
@@ -73,6 +75,7 @@ resource "dokploy_compose" "infisical" {
     services:
       infisical:
         image: infisical/infisical:v0.167.14      # pin; review before upgrading
+        restart: always                           # depends_on does not order reboot restarts; this retries until the DB answers
         depends_on: { infisical-db: {condition: service_healthy}, infisical-redis: {condition: service_healthy} }
         environment:
           SITE_URL: https://${var.infisical_domain}
@@ -83,14 +86,17 @@ resource "dokploy_compose" "infisical" {
         networks: [default, dokploy-network]
       infisical-db:
         image: postgres:16-alpine
+        restart: always
         environment: { POSTGRES_USER: infisical, POSTGRES_DB: infisical, POSTGRES_PASSWORD: "$${POSTGRES_PASSWORD:?required}" }
         volumes: ["database:/var/lib/postgresql/data"]
         healthcheck: { test: ["CMD", "pg_isready", "-U", "infisical", "-d", "infisical"], interval: 5s, retries: 24 }
       infisical-redis:
         image: redis:7-alpine
+        restart: always
         command: ["redis-server", "--appendonly", "yes", "--requirepass", "$${REDIS_PASSWORD:?required}"]
         volumes: ["redis:/data"]
-        healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 24 }
+        # authenticate: with requirepass a bare `redis-cli ping` is not a real health signal
+        healthcheck: { test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD:?required}", "ping"], interval: 5s, retries: 24 }
     volumes: { database: {name: "${var.platform}-infisical-database"}, redis: {name: "${var.platform}-infisical-redis"} }
     networks: { dokploy-network: { external: true } }
     YAML
@@ -176,14 +182,19 @@ One Compose stack per stage running only the server; no databases are created
 here.
 
 ```hcl
+variable "postgres_image" { type = string, default = "postgres:17.6-alpine" }   # pin the minor; keep modules/database's `image` in line
 data "infisical_secrets" "postgres" { folder_path = "/platform/postgres" }
 resource "dokploy_compose" "postgres" {
   name = "${var.platform}-postgres-${var.environment}"
+  environment_id   = var.environment_id
+  delete_volumes   = false          # removing data is a separate, human-approved procedure
+  deploy_on_change = false
   env  = "POSTGRES_PASSWORD=${data.infisical_secrets.postgres.secrets["POSTGRES_PASSWORD"].value}"
   raw = { compose_file = <<-YAML
     services:
       ${var.platform}-postgres-${var.environment}:
-        image: postgres:16-alpine
+        image: ${var.postgres_image}
+        restart: always
         environment: { POSTGRES_USER: postgres, POSTGRES_DB: postgres, POSTGRES_PASSWORD: "$${POSTGRES_PASSWORD:?required}" }
         volumes: ["data:/var/lib/postgresql/data"]
         networks: [dokploy-network]
@@ -217,14 +228,14 @@ resource "dokploy_compose" "provision" {
   env  = "PGPASSWORD=${var.admin_password}\nDB_PASSWORD=${var.password}"
   raw = { compose_file = yamlencode({
     services = { provision = {
-      image   = "postgres:16-alpine"
+      image   = var.image   # variable "image", default the same pinned postgres as the server
       command = ["psql", "-X", "-v", "ON_ERROR_STOP=1", "-f", "/provision.sql"]
       environment = { PGHOST = var.postgres_host, PGPORT = "5432", PGUSER = "postgres", PGDATABASE = "postgres",
                        PGPASSWORD = "$${PGPASSWORD:?required}", DB_PASSWORD = "$${DB_PASSWORD:?required}",
                        DB_NAME = var.database, DB_USER = var.user }
       configs  = [{ source = "provision", target = "/provision.sql" }]
       networks = ["dokploy-network"]
-      restart  = "no"
+      restart  = "no"   # one-shot job: it must NOT run again after a reboot (the opposite of the servers)
     } }
     configs  = { provision = { content = file("${path.module}/provision.sql") } }
     networks = { dokploy-network = { external = true } }
