@@ -1,6 +1,6 @@
 ---
 name: commit-changes
-description: Analyzes uncommitted changes, groups related files by topic/feature and dependency level, creates well-structured commits with meaningful messages, and uses one feature branch per logical area. Respects both inter-feature dependencies (features commit in order) and intra-feature commit grouping (files grouped with dependency awareness within each feature). Use when the user asks to commit, save changes, wrap up work, or split work into feature branches.
+description: Analyzes uncommitted changes, groups related files by topic/feature and dependency level, creates well-structured commits with meaningful messages, and uses one feature branch per logical area. Respects both inter-feature dependencies (features commit in order) and intra-feature commit grouping (files grouped with dependency awareness within each feature). Use when the user asks to commit, save changes, wrap up work, or split work into feature branches. Also has a superproject variant (`/commit-changes super`) for a repo of git submodules: commit inside each submodule first, wait until everything is merged into dev, then commit the submodule pointers in the superproject.
 allowed-tools: Bash, Read
 ---
 
@@ -16,6 +16,7 @@ When many files have changed across unrelated topics and features, split them in
 
 1. **Branch-per-feature mode** (primary, recommended) — split the changes into **separate feature areas** ordered by dependency level, create one branch per feature area, group and commit that area's files within its branch (respecting intra-feature dependencies), merge back to the starting branch, then move to the next feature area. This produces one branch (and one merge commit) per feature area, with commits inside each branch also ordered by dependency.
 2. **Direct mode** — group and commit straight onto the current branch (deprecated; useful only for trivial changes with no cross-feature dependencies).
+3. **Superproject variant** — for a repo whose product code lives in git submodules. Commit in each submodule first, wait until the work is merged into the submodules' `dev`, then commit the pointers and root files. See "Variant: superproject with submodules" at the end.
 
 ## Why Dependency-Aware Commits & No `--no-verify`?
 
@@ -338,3 +339,71 @@ git status
 - Feature 5 (i18n): Translation files. Depends on: Features 3 + 4
 
 **Within each feature branch**, commits are also ordered (e.g., within Feature 2, store setup commits before page-specific slices).
+
+## Variant: superproject with submodules
+
+Use when the repo is a superproject (`.gitmodules`, product code in submodules) and
+the user asks to commit "everything", "the submodules" or invokes
+`/commit-changes super`. The rule behind it: **a superproject pointer may only
+reference a commit that already exists on the submodule's `dev` on the remote**,
+otherwise other machines cannot check it out.
+
+The flow has three phases and a hard stop between 2 and 3.
+
+### Phase 1. Survey every submodule
+
+```bash
+git submodule foreach --quiet 'echo "== $displaypath"; git fetch -q origin; \
+  echo "branch: $(git branch --show-current)  HEAD: $(git rev-parse --short HEAD)"; \
+  echo "behind origin/dev: $(git rev-list --count HEAD..origin/dev)  ahead: $(git rev-list --count origin/dev..HEAD)"; \
+  git status --short'
+git status --short            # root changes, including modified pointers
+```
+
+Report a table (submodule, branch, behind/ahead of `origin/dev`, pending files).
+Then, per submodule:
+
+- **Clean and not on `dev`** (typically because its work was merged): `git checkout dev`
+  and `git merge --ff-only origin/dev`. If its branch still holds unmerged commits,
+  stop and ask.
+- **Pending changes, on `dev`**: stay; the work goes on a feature branch from
+  up-to-date `dev` (`git merge --ff-only origin/dev` first). Never commit on `dev` or `main`.
+- **Pending changes, on a feature branch**: keep it. Make sure it contains current
+  `origin/dev`; if it does not, ask before merging or rebasing.
+- The shared skills submodule (`.agents/skills`) is committed and merged **first**,
+  because other submodules may rely on it.
+
+### Phase 2. Commit inside each submodule, then stop
+
+For each submodule with pending changes, run the primary procedure (branch-per-feature
+mode, plan confirmed with the user) inside it, following that submodule's own
+`AGENTS.md`. Then list, per submodule, the branch that has to go into a PR against `dev`.
+
+Pushing and opening PRs needs the user's explicit approval. Do it when approved
+(GitHub MCP or `gh`), otherwise give the compare links. **Then stop and wait.** Do not
+touch the superproject until the user says everything is merged into `dev`.
+
+### Phase 3. Commit the superproject
+
+1. Re-run the survey with a fetch. For every submodule: `git checkout dev`,
+   `git merge --ff-only origin/dev`, and confirm the work is there
+   (`git branch -r --contains <sha>` must list `origin/dev`). If a submodule is not
+   merged yet, stop and say which one.
+2. In the superproject `git status` now shows the moved pointers (`modified: <sub> (new commits)`)
+   plus any root changes (`AGENTS.md`, workflows, `.gitmodules`, `.mcp.json`).
+3. Group as in the primary procedure, in this order: skills pointer first, then the
+   other pointers, then root files that depend on them. Typical commits:
+   `chore: update submodules` (all pointers together when they ship one feature, one commit
+   per submodule when unrelated), then `docs:`/`ci:`/`chore:` for root files.
+4. The superproject has `main` only: commit on a feature branch from `main`, push and open a PR
+   into `main` only with approval. Never commit on `main`.
+
+### Guardrails for the variant
+
+- Never stage a submodule pointer whose commit is not on the remote `dev`.
+- Never commit inside a submodule on `dev` or `main`, and never force push.
+- Never stage `.env`, `*.tfvars`, tokens or state of any submodule.
+- Ignore pointer changes that only come from a stale local checkout: update the checkout
+  to `origin/dev` instead of committing them.
+- Do not start Phase 3 on a guess that PRs are merged; verify with a fetch.
+
